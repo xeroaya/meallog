@@ -1,5 +1,15 @@
 import Anthropic from '@anthropic-ai/sdk'
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+}
+
+export const maxDuration = 30
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const PROMPT = `この画像を分析してください。
