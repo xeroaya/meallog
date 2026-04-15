@@ -1,13 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
 
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
-}
-
 export const maxDuration = 30
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -30,7 +22,7 @@ export async function POST(req) {
     }
 
     const message = await client.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-sonnet-4-6',
       max_tokens: 150,
       messages: [{
         role: 'user',
