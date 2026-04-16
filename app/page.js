@@ -32,31 +32,48 @@ export default function Home() {
   const filteredPosts = filterTag === '全て' ? allPosts : allPosts.filter(p => p.tags?.includes(filterTag))
   const savedPosts = allPosts.filter(p => saves[p.id])
 
+  async function compressImage(file) {
+    return new Promise((resolve) => {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const MAX = 1024
+        let w = img.width, h = img.height
+        if (w > MAX || h > MAX) {
+          if (w > h) { h = Math.round(h * MAX / w); w = MAX }
+          else { w = Math.round(w * MAX / h); h = MAX }
+        }
+        canvas.width = w; canvas.height = h
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+        URL.revokeObjectURL(url)
+        resolve(canvas.toDataURL('image/jpeg', 0.8))
+      }
+      img.src = url
+    })
+  }
+
   async function onFileChange(e) {
     const file = e.target.files[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = async (ev) => {
-      const data = ev.target.result
-      setImgData(data)
+    setAnalyzeResult(null)
+    setAnalyzing(true)
+    try {
+      const compressed = await compressImage(file)
+      setImgData(compressed)
       setImgFile(file)
-      setAnalyzeResult(null)
-      setAnalyzing(true)
-      try {
-        const base64 = data.split(',')[1]
-        const res = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: base64, mediaType: file.type })
-        })
-        const result = await res.json()
-        setAnalyzeResult(result)
-      } catch (err) {
-        setAnalyzeResult({ error: err.message })
-      }
-      setAnalyzing(false)
+      const base64 = compressed.split(',')[1]
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mediaType: 'image/jpeg' })
+      })
+      const result = await res.json()
+      setAnalyzeResult(result)
+    } catch (err) {
+      setAnalyzeResult({ error: err.message })
     }
-    reader.readAsDataURL(file)
+    setAnalyzing(false)
   }
 
   function toggleTag(tag) {
