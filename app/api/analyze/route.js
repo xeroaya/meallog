@@ -1,18 +1,25 @@
-import Anthropic from '@anthropic-ai/sdk'
-
 export const maxDuration = 30
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const FOOD_LABELS = [
+  'Food', 'Dish', 'Cuisine', 'Meal', 'Recipe', 'Ingredient',
+  'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Dessert', 'Drink',
+  'Beverage', 'Baking', 'Seafood', 'Meat', 'Vegetable', 'Fruit',
+  'Noodle', 'Rice', 'Bread', 'Soup', 'Salad', 'Sushi', 'Ramen',
+  'Pizza', 'Burger', 'Sandwich', 'Pasta', 'Steak', 'Curry',
+  'Coffee', 'Tea', 'Juice', 'Beer', 'Wine', 'Cake', 'Cookie',
+  'Ice cream', 'Chocolate', 'Cheese', 'Egg', 'Chicken', 'Pork',
+  'Beef', 'Fish', 'Shrimp', 'Tofu', 'Tempura', 'Yakitori',
+  'Bento', 'Donburi', 'Udon', 'Soba', 'Takoyaki', 'Okonomiyaki',
+  'Japanese cuisine', 'Chinese cuisine', 'Italian cuisine', 'Fast food',
+  'Street food', 'Comfort food', 'Health food', 'Junk food',
+]
 
-const PROMPT = `この画像を分析してください。
-
-【重要ルール】実際に料理・飲食物として提供されたリアルな写真のみを対象とする。
-アニメ・イラスト・絵・CG・キャラクター・食べ物の絵が描かれた商品パッケージは、食べ物が写っていても0%とすること。
-実際に撮影された本物の料理・飲食物のみを対象とする。
-
-画像全体のうち、実際の食べ物・料理・飲み物が占める割合を0〜100%で推定してください。
-必ず以下のJSON形式のみで返答してください（他のテキストは一切不要）：
-{"food_percent": 数字, "reason": "日本語で一言"}`
+const REJECT_LABELS = [
+  'Cartoon', 'Illustration', 'Drawing', 'Animation', 'Anime',
+  'Manga', 'Comics', 'Clipart', 'Logo', 'Text', 'Poster',
+  'Packaging', 'Product', 'Label', 'Brand', 'Graphic design',
+  'Pattern', 'Wallpaper', 'Art', 'Painting', 'Sculpture',
+]
 
 export async function POST(req) {
   try {
@@ -21,24 +28,64 @@ export async function POST(req) {
       return Response.json({ error: '画像データがありません' }, { status: 400 })
     }
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 150,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: imageBase64 } },
-          { type: 'text', text: PROMPT }
-        ]
-      }]
-    })
+    const apiKey = process.env.GOOGLE_VISION_API_KEY
+    if (!apiKey) {
+      return Response.json({ error: 'APIキーが設定されていません' }, { status: 500 })
+    }
 
-    const raw = message.content[0].text.replace(/```json|```/g, '').trim()
-    const match = raw.match(/\{[\s\S]*?\}/)
-    const parsed = JSON.parse(match ? match[0] : raw)
-    const pct = Math.round(Math.max(0, Math.min(100, Number(parsed.food_percent) || 0)))
+    const visionRes = await fetch(
+      `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [{
+            image: { content: imageBase64 },
+            features: [
+              { type: 'LABEL_DETECTION', maxResults: 20 },
+              { type: 'SAFE_SEARCH_DETECTION' },
+            ]
+          }]
+        })
+      }
+    )
 
-    return Response.json({ food_percent: pct, reason: parsed.reason || '' })
+    const visionData = await visionRes.json()
+    const labels = visionData.responses?.[0]?.labelAnnotations || []
+
+    // イラスト・アニメ判定
+    const isIllustration = labels.some(l =>
+      REJECT_LABELS.some(r => l.description.toLowerCase().includes(r.toLowerCase())) && l.score > 0.7
+    )
+    if (isIllustration) {
+      return Response.json({
+        food_percent: 0,
+        reason: 'イラストまたはアニメ画像のため投稿できません'
+      })
+    }
+
+    // 食べ物スコア計算
+    let foodScore = 0
+    let foodLabel = ''
+    for (const label of labels) {
+      const isFoodLabel = FOOD_LABELS.some(f =>
+        label.description.toLowerCase().includes(f.toLowerCase())
+      )
+      if (isFoodLabel && label.score > foodScore) {
+        foodScore = label.score
+        foodLabel = label.description
+      }
+    }
+
+    const foodPercent = Math.round(foodScore * 100)
+    const reason = foodPercent >= 60
+      ? `${foodLabel}の写真と判定しました`
+      : labels.length > 0
+        ? `${labels[0].description}の写真です（食べ物ではありません）`
+        : '食べ物が検出できませんでした'
+
+    return Response.json({ food_percent: foodPercent, reason })
+
   } catch (e) {
     console.error(e)
     return Response.json({ error: e.message }, { status: 500 })
